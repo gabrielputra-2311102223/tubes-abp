@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pembayaran - Ngebut.in Admin</title>
+    <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body class="dashboard-layout">
+    
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="../index.html" class="logo" style="margin-bottom: 1rem;">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">NGEBUT<span>.in</span></span>
+            </a>
+            <div class="user-profile">
+                <div class="user-avatar">A</div>
+                <div class="user-info">
+                    <h4>Administrator</h4>
+                    <p><i class="fas fa-shield-alt"></i> Super Admin</p>
+                </div>
+            </div>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item">
+                <i class="fas fa-chart-pie"></i> Dashboard
+            </a>
+            <a href="kendaraan.html" class="nav-item">
+                <i class="fas fa-motorcycle"></i> Kelola Kendaraan
+            </a>
+            <a href="booking.html" class="nav-item">
+                <i class="fas fa-calendar-check"></i> Approval Booking
+            </a>
+            <a href="pembayaran.html" class="nav-item active">
+                <i class="fas fa-credit-card"></i> Pembayaran
+            </a>
+            <a href="#" class="nav-item logout" onclick="logout()">
+                <i class="fas fa-sign-out-alt"></i> Logout
+            </a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>Manajemen Pembayaran</h1>
+                <p>Konfirmasi pembayaran dan cetak kuitansi</p>
+            </div>
+        </div>
+
+        <div class="filter-tabs" style="margin-bottom: 1.5rem;">
+            <button class="filter-tab active" onclick="setFilter('booked', event)">
+                <i class="fas fa-motorcycle"></i> Menunggu Pembayaran
+            </button>
+            <button class="filter-tab" onclick="setFilter('paid', event)">
+                <i class="fas fa-check-circle"></i> Sudah Dibayar
+            </button>
+        </div>
+
+        <div id="paymentGrid" class="motor-grid"></div>
+    </main>
+
+    <div id="invoiceModal" class="modal-overlay no-print">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header no-print">
+                <h3><i class="fas fa-receipt"></i> Kuitansi Pembayaran</h3>
+                <button class="modal-close" onclick="closeInvoiceModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="invoiceContent"></div>
+            <div class="modal-footer no-print">
+                <button class="btn btn-outline" onclick="closeInvoiceModal()">Tutup</button>
+                <button class="btn btn-primary" onclick="printInvoice()">
+                    <i class="fas fa-print"></i> Cetak Kuitansi
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../assets/js/storage.js"></script>
+    <script src="../assets/js/script.js"></script>
+
+    <script>
+    const user = getCurrentUser();
+    if (!user || user.role !== 'admin') {
+        window.location.href = '../login.html';
+    }
+
+    let currentFilter = 'booked';
+    let currentInvoiceData = null;
+
+    function setFilter(filter, event) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.remove('active'));
+        event.target.classList.add('active');
+        renderPayments();
+    }
+
+    function renderPayments() {
+        let bookings = getBooking();
+        const motors = getMotor();
+        const grid = document.getElementById('paymentGrid');
+
+        // 🔥 DEBUG
+        console.log("SEMUA BOOKING:", bookings);
+
+        // 🔥 FILTER DIPERBAIKI (ANTI HILANG)
+        if (currentFilter === 'booked') {
+            bookings = bookings.filter(b =>
+                b.status === 'booked' ||
+                b.status === 'approved' || // jaga-jaga data lama
+                b.status === 'confirm'    // jaga-jaga juga
+            );
+        } else {
+            bookings = bookings.filter(b => b.status === 'paid');
+        }
+
+        if (bookings.length === 0) {
+            grid.innerHTML = `
+                <div style="grid-column: 1/-1; text-align: center; padding: 4rem; color: var(--gray-500);">
+                    <i class="fas fa-credit-card" style="font-size: 3rem; opacity: 0.3; margin-bottom: 1rem;"></i>
+                    <h3>Tidak ada data</h3>
+                </div>
+            `;
+            return;
+        }
+
+        grid.innerHTML = bookings.map(b => {
+            const motor = motors.find(m => m.id === b.motorId);
+            const days = calculateDays(b.startDate, b.endDate);
+
+            return `
+                <div class="motor-card">
+                    <div class="motor-image">
+                        <img src="${motor?.gambar || 'https://placehold.co/400x300'}">
+                        <span class="motor-badge ${b.status === 'paid' ? 'badge-available' : 'badge-booked'}">
+                            ${b.status === 'paid' ? 'LUNAS' : 'BELUM BAYAR'}
+                        </span>
+                    </div>
+
+                    <div class="motor-content">
+                        <h3 class="motor-title">${b.motorName}</h3>
+
+                        <p class="motor-desc">
+                            <i class="fas fa-user"></i> ${b.userName}<br>
+                            <i class="fas fa-calendar"></i> ${formatShortDate(b.startDate)} - ${formatShortDate(b.endDate)}<br>
+                            <i class="fas fa-clock"></i> ${days} hari
+                        </p>
+
+                        <div class="motor-price">
+                            <span class="price-amount">${formatRupiah(b.totalHarga)}</span>
+                        </div>
+
+                        ${b.status === 'paid' ? `
+                            <button class="btn btn-outline" style="width:100%;margin-top:1rem;" onclick="showInvoice(${b.id})">
+                                <i class="fas fa-receipt"></i> Lihat Kuitansi
+                            </button>
+                        ` : `
+                            <button class="btn btn-primary" style="width:100%;margin-top:1rem;" onclick="confirmPayment(${b.id})">
+                                <i class="fas fa-check-circle"></i> Konfirmasi Pembayaran
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // ✅ KONFIRMASI PEMBAYARAN
+    function confirmPayment(bookingId) {
+        if (!confirm('Konfirmasi pembayaran untuk booking ini?')) return;
+
+        let bookings = getBooking();
+        const booking = bookings.find(b => b.id === bookingId);
+        if (!booking) return;
+
+        booking.status = 'paid';
+        booking.paidAt = new Date().toISOString();
+
+        saveBooking(bookings);
+
+        alert('✅ Pembayaran berhasil dikonfirmasi!');
+
+        renderPayments();
+        showInvoice(bookingId);
+    }
+
+    // ✅ KUITANSI FINAL
+    function showInvoice(bookingId) {
+        const booking = getBooking().find(b => b.id === bookingId);
+        if (!booking) return;
+
+        currentInvoiceData = booking;
+
+        const days = calculateDays(booking.startDate, booking.endDate);
+        const tarifPerHari = booking.totalHarga / days;
+
+        document.getElementById('invoiceContent').innerHTML = `
+            <div style="font-family: Arial; padding:20px;">
+
+                <div style="text-align:center;">
+                    <h2 style="margin:0;">NGEBUT.IN</h2>
+                    <p>Jalan Soekarno Hatta No. 45</p>
+                    <p>Bandung, Jawa Barat</p>
+                    <p>Telp: (022) 123-4567 | halo@ngebut.in</p>
+                </div>
+
+                <hr>
+
+                <div style="display:flex; justify-content:space-between;">
+                    <div>
+                        <h3>KUITANSI SEWA</h3>
+                        <p>INVOICE NO: #${booking.id.toString().slice(-6)}</p>
+                        <p>TANGGAL CETAK: ${new Date().toLocaleDateString()}</p>
+                    </div>
+                    <div style="text-align:right;">
+                        <h3 style="color:green;">LUNAS</h3>
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <h4>Informasi Penyewa</h4>
+                    <p>Nama: ${booking.userName}</p>
+                    <p>Email: ${booking.userEmail || '-'}</p>
+                </div>
+
+                <table border="1" cellspacing="0" cellpadding="8" width="100%" style="margin-top:15px; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f5f5f5;">
+                            <th>Kendaraan</th>
+                            <th>Tgl Ambil</th>
+                            <th>Tgl Kembali</th>
+                            <th>Durasi</th>
+                            <th>Tarif/Hari</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>${booking.motorName}</td>
+                            <td>${formatShortDate(booking.startDate)}</td>
+                            <td>${formatShortDate(booking.endDate)}</td>
+                            <td>${days} Hari</td>
+                            <td>${formatRupiah(tarifPerHari)}</td>
+                            <td>${formatRupiah(booking.totalHarga)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div style="text-align:right; margin-top:20px;">
+                    <h3>GRAND TOTAL: ${formatRupiah(booking.totalHarga)}</h3>
+                </div>
+
+                <p style="margin-top:30px; font-size:12px; text-align:center;">
+                    Dokumen ini sah tanpa tanda tangan.
+                </p>
+
+            </div>
+        `;
+
+        document.getElementById('invoiceModal').style.display = 'flex';
+    }
+
+    function closeInvoiceModal() {
+        document.getElementById('invoiceModal').style.display = 'none';
+    }
+
+    function printInvoice() {
+        window.print();
+    }
+
+    document.getElementById('invoiceModal').addEventListener('click', function(e) {
+        if (e.target === this) closeInvoiceModal();
+    });
+
+    renderPayments();
+    setInterval(renderPayments, 5000);
+</script>
